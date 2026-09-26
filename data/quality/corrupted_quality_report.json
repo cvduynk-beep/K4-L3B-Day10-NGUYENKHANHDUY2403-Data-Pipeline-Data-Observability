@@ -1,0 +1,94 @@
+{
+  "report_name": "corrupted",
+  "success": false,
+  "gx_success": false,
+  "total_checks": 6,
+  "passed_checks": 4,
+  "failed_checks": 2,
+  "checks": [
+    {
+      "expectation_type": "expect_table_row_count_to_be_between",
+      "kwargs": {
+        "batch_id": "papers_source_corrupted_1790393757519-papers_asset",
+        "min_value": "20",
+        "max_value": "30"
+      },
+      "success": true,
+      "result": {
+        "observed_value": 22,
+        "unexpected_count": 0
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "batch_id": "papers_source_corrupted_1790393757519-papers_asset",
+        "column": "paper_id"
+      },
+      "success": true,
+      "result": {
+        "observed_value": null,
+        "unexpected_count": 0
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_unique",
+      "kwargs": {
+        "batch_id": "papers_source_corrupted_1790393757519-papers_asset",
+        "column": "paper_id"
+      },
+      "success": false,
+      "result": {
+        "observed_value": null,
+        "unexpected_count": 4
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "batch_id": "papers_source_corrupted_1790393757519-papers_asset",
+        "column": "title"
+      },
+      "success": true,
+      "result": {
+        "observed_value": null,
+        "unexpected_count": 0
+      }
+    },
+    {
+      "expectation_type": "expect_column_value_lengths_to_be_between",
+      "kwargs": {
+        "batch_id": "papers_source_corrupted_1790393757519-papers_asset",
+        "column": "summary",
+        "min_value": "50",
+        "max_value": "5000"
+      },
+      "success": false,
+      "result": {
+        "observed_value": null,
+        "unexpected_count": 4
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "batch_id": "papers_source_corrupted_1790393757519-papers_asset",
+        "column": "text_for_embedding"
+      },
+      "success": true,
+      "result": {
+        "observed_value": null,
+        "unexpected_count": 0
+      }
+    }
+  ],
+  "freshness": {
+    "latest_published": "2026-06-06",
+    "oldest_published": "2025-01-23",
+    "stale_rows": 11,
+    "total_rows": 22,
+    "stale_ratio": 0.5,
+    "is_fresh": false,
+    "freshness_threshold_days": 180
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "report_name": "baseline",
+  "success": true,
+  "gx_success": true,
+  "total_checks": 6,
+  "passed_checks": 6,
+  "failed_checks": 0,
+  "checks": [
+    {
+      "expectation_type": "expect_table_row_count_to_be_between",
+      "kwargs": {
+        "batch_id": "papers_source_baseline_1790393711769-papers_asset",
+        "min_value": "20",
+        "max_value": "30"
+      },
+      "success": true,
+      "result": {
+        "observed_value": 24,
+        "unexpected_count": 0
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "batch_id": "papers_source_baseline_1790393711769-papers_asset",
+        "column": "paper_id"
+      },
+      "success": true,
+      "result": {
+        "observed_value": null,
+        "unexpected_count": 0
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_be_unique",
+      "kwargs": {
+        "batch_id": "papers_source_baseline_1790393711769-papers_asset",
+        "column": "paper_id"
+      },
+      "success": true,
+      "result": {
+        "observed_value": null,
+        "unexpected_count": 0
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "batch_id": "papers_source_baseline_1790393711769-papers_asset",
+        "column": "title"
+      },
+      "success": true,
+      "result": {
+        "observed_value": null,
+        "unexpected_count": 0
+      }
+    },
+    {
+      "expectation_type": "expect_column_value_lengths_to_be_between",
+      "kwargs": {
+        "batch_id": "papers_source_baseline_1790393711769-papers_asset",
+        "column": "summary",
+        "min_value": "50",
+        "max_value": "5000"
+      },
+      "success": true,
+      "result": {
+        "observed_value": null,
+        "unexpected_count": 0
+      }
+    },
+    {
+      "expectation_type": "expect_column_values_to_not_be_null",
+      "kwargs": {
+        "batch_id": "papers_source_baseline_1790393711769-papers_asset",
+        "column": "text_for_embedding"
+      },
+      "success": true,
+      "result": {
+        "observed_value": null,
+        "unexpected_count": 0
+      }
+    }
+  ],
+  "freshness": {
+    "latest_published": "2026-07-22",
+    "oldest_published": "2026-03-28",
+    "stale_rows": 1,
+    "total_rows": 24,
+    "stale_ratio": 0.0417,
+    "is_fresh": true,
+    "freshness_threshold_days": 180
+  }
+}
