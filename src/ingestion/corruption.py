@@ -1,143 +1,134 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
-
 import pandas as pd
 
 from core.utils import write_json
 
 
 def corrupt_clean_dataframe(df: pd.DataFrame, output_log_path: Path | str) -> pd.DataFrame:
-    """Simulate 6 dang data corruption theo yeu cau de bai:
-
-    1. Drop latest records (mat 20% ban ghi moi).
-    2. Blank summary o mot so dong.
-    3. Inject noise vao summary.
-    4. Lam title bi truncate (< 8 ky tu).
-    5. Lam published date cu di (lui 500 ngay de vi pham Freshness SLA).
-    6. Add duplicate rows (vi pham unique paper_id).
-    7. Rebuild `text_for_embedding`.
-    8. Ghi corruption log vao output_log_path.
+    """Simulate 6 synthetic data corruption scenarios:
+    1. Drop 20% of latest records.
+    2. Blank summaries.
+    3. Inject random noise into summaries.
+    4. Truncate titles to < 8 chars (violating GX length expectation).
+    5. Stale publication dates (violating Freshness SLA).
+    6. Duplicate rows (violating GX uniqueness expectation).
+    Rebuilds text_for_embedding and logs operations.
     """
     corrupted_df = df.copy()
-    logs: list[dict[str, Any]] = []
+    corruption_log: list[dict[str, Any]] = []
 
-    # 1. Drop latest 20% records (khoang 5 records neu tong 24)
-    drop_count = max(1, int(len(corrupted_df) * 0.20))
-    dropped_rows = corrupted_df.iloc[:drop_count]
-    dropped_ids = dropped_rows["paper_id"].tolist()
-    corrupted_df = corrupted_df.iloc[drop_count:].copy().reset_index(drop=True)
-    logs.append(
+    # 1. Drop latest records (~20% newest)
+    num_to_drop = max(1, int(len(corrupted_df) * 0.20))
+    dropped_records = corrupted_df.iloc[:num_to_drop]
+    dropped_ids = dropped_records["paper_id"].tolist()
+    corrupted_df = corrupted_df.iloc[num_to_drop:].reset_index(drop=True)
+    corruption_log.append(
         {
-            "scenario": "drop_latest_records",
-            "description": f"Dropped {drop_count} latest records ({drop_count / len(df):.0%})",
+            "scenario": "drop_latest",
+            "description": f"Dropped {num_to_drop} latest records (20% of dataset)",
+            "affected_count": num_to_drop,
             "affected_ids": dropped_ids,
         }
     )
 
-    # 2. Blank summary o 2 dong
-    blank_indices = [0, 1] if len(corrupted_df) >= 2 else [0]
+    # 2. Blank summary (2 rows)
+    blank_indices = [0, 1] if len(corrupted_df) > 1 else [0]
     blank_ids = []
     for idx in blank_indices:
-        corrupted_df.loc[idx, "summary"] = ""
-        corrupted_df.loc[idx, "summary_chars"] = 0
-        blank_ids.append(str(corrupted_df.loc[idx, "paper_id"]))
-    logs.append(
+        if idx < len(corrupted_df):
+            corrupted_df.at[idx, "summary"] = ""
+            blank_ids.append(corrupted_df.at[idx, "paper_id"])
+    corruption_log.append(
         {
             "scenario": "blank_summary",
-            "description": f"Blanked summary for {len(blank_ids)} records",
+            "description": "Erased paper summary (empty string)",
+            "affected_count": len(blank_ids),
             "affected_ids": blank_ids,
         }
     )
 
-    # 3. Inject noise vao summary o 2 dong
-    noise_indices = [2, 3] if len(corrupted_df) >= 4 else []
+    # 3. Inject noise into summary (2 rows)
+    noise_indices = [2, 3] if len(corrupted_df) > 3 else []
     noise_ids = []
-    noise_payload = " [CORRUPTED_NOISE_$%#@! INVALID_VECTOR_EMBEDDING] "
     for idx in noise_indices:
-        orig = str(corrupted_df.loc[idx, "summary"])
-        corrupted_df.loc[idx, "summary"] = f"{noise_payload} {orig} {noise_payload}"
-        corrupted_df.loc[idx, "summary_chars"] = len(corrupted_df.loc[idx, "summary"])
-        noise_ids.append(str(corrupted_df.loc[idx, "paper_id"]))
-    logs.append(
+        if idx < len(corrupted_df):
+            corrupted_df.at[idx, "summary"] = "### CORRUPTED RANDOM NOISE &&& MALFORMED TEXT ??? $$$ ###"
+            noise_ids.append(corrupted_df.at[idx, "paper_id"])
+    corruption_log.append(
         {
             "scenario": "inject_noise",
-            "description": f"Injected noise tokens into summary for {len(noise_ids)} records",
+            "description": "Injected gibberish noise into summary",
+            "affected_count": len(noise_ids),
             "affected_ids": noise_ids,
         }
     )
 
-    # 4. Truncate title < 8 ky tu o 2 dong
-    trunc_indices = [4, 5] if len(corrupted_df) >= 6 else []
-    trunc_ids = []
-    for idx in trunc_indices:
-        corrupted_df.loc[idx, "title"] = "Bad"
-        trunc_ids.append(str(corrupted_df.loc[idx, "paper_id"]))
-    logs.append(
+    # 4. Truncate title to < 8 chars (2 rows) -> Triggers GX ExpectColumnValueLengthsToBeBetween
+    truncate_indices = [4, 5] if len(corrupted_df) > 5 else []
+    truncated_ids = []
+    for idx in truncate_indices:
+        if idx < len(corrupted_df):
+            corrupted_df.at[idx, "title"] = "Bad"
+            truncated_ids.append(corrupted_df.at[idx, "paper_id"])
+    corruption_log.append(
         {
             "scenario": "truncate_title",
-            "description": f"Truncated title to '< 8 chars' for {len(trunc_ids)} records",
-            "affected_ids": trunc_ids,
+            "description": "Truncated paper title to < 8 chars ('Bad')",
+            "affected_count": len(truncated_ids),
+            "affected_ids": truncated_ids,
         }
     )
 
-    # 5. Stale date (lui 500 ngay o 8 dong de > 25% tong so bai bi stale)
-    stale_count = min(8, len(corrupted_df))
+    # 5. Stale date (make > 25% of dataset stale) -> Triggers Freshness SLA violation
+    stale_indices = list(range(6, min(14, len(corrupted_df))))
     stale_ids = []
-    for idx in range(stale_count):
-        try:
-            pub_date = datetime.strptime(str(corrupted_df.loc[idx, "published"])[:10], "%Y-%m-%d").date()
-            new_date = pub_date - timedelta(days=500)
-            corrupted_df.loc[idx, "published"] = new_date.isoformat()
-            corrupted_df.loc[idx, "age_days"] = int(corrupted_df.loc[idx, "age_days"]) + 500
-            stale_ids.append(str(corrupted_df.loc[idx, "paper_id"]))
-        except Exception:
-            pass
-    logs.append(
+    for idx in stale_indices:
+        corrupted_df.at[idx, "published"] = "2018-01-01"
+        corrupted_df.at[idx, "age_days"] = 3000
+        stale_ids.append(corrupted_df.at[idx, "paper_id"])
+    corruption_log.append(
         {
             "scenario": "stale_date",
-            "description": f"Shifted publication date back by 500 days for {len(stale_ids)} records (violating Freshness SLA)",
+            "description": "Set published date to 2018-01-01 (age_days = 3000)",
+            "affected_count": len(stale_ids),
             "affected_ids": stale_ids,
         }
     )
 
-    # 6. Add duplicate rows (nhan doi 2 dong)
-    dup_rows = corrupted_df.iloc[:2].copy()
-    dup_ids = dup_rows["paper_id"].tolist()
+    # 6. Duplicate rows (2 rows) -> Triggers GX ExpectColumnValuesToBeUnique
+    dup_rows = corrupted_df.iloc[[0, 1]].copy()
+    duplicated_ids = dup_rows["paper_id"].tolist()
     corrupted_df = pd.concat([corrupted_df, dup_rows], ignore_index=True)
-    logs.append(
+    corruption_log.append(
         {
             "scenario": "duplicate_rows",
-            "description": f"Duplicated {len(dup_ids)} rows, creating duplicate paper_id",
-            "affected_ids": dup_ids,
+            "description": "Appended duplicate rows to cause duplicate paper_id",
+            "affected_count": len(duplicated_ids),
+            "affected_ids": duplicated_ids,
         }
     )
 
-    # 7. Rebuild text_for_embedding cho toan bo cac dong
-    text_embeddings = []
-    for _, row in corrupted_df.iterrows():
-        t = (
-            f"Title: {row['title']}\n"
-            f"Authors: {row['authors_joined']}\n"
-            f"Categories: {row['categories_joined']}\n"
-            f"Published Date: {row['published']}\n"
-            f"Summary: {row['summary']}"
+    # 7. Rebuild text_for_embedding & helper columns
+    for idx in range(len(corrupted_df)):
+        title = corrupted_df.at[idx, "title"]
+        authors = corrupted_df.at[idx, "authors_joined"]
+        categories = corrupted_df.at[idx, "categories_joined"]
+        published = corrupted_df.at[idx, "published"]
+        summary = corrupted_df.at[idx, "summary"]
+        corrupted_df.at[idx, "summary_chars"] = len(str(summary))
+        corrupted_df.at[idx, "text_for_embedding"] = (
+            f"Title: {title}\n"
+            f"Authors: {authors}\n"
+            f"Categories: {categories}\n"
+            f"Published: {published}\n"
+            f"Summary: {summary}"
         )
-        text_embeddings.append(t)
-    corrupted_df["text_for_embedding"] = text_embeddings
 
-    # 8. Ghi corruption log
+    # 8. Write corruption log
     out_p = Path(output_log_path)
-    write_json(
-        out_p,
-        {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "original_rows": len(df),
-            "corrupted_rows": len(corrupted_df),
-            "scenarios": logs,
-        },
-    )
+    write_json(out_p, corruption_log)
 
     return corrupted_df

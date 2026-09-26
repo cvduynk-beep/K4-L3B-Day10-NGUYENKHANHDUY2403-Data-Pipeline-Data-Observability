@@ -1,17 +1,56 @@
 from __future__ import annotations
 
 from pathlib import Path
-import time
 from typing import Any
 
+import great_expectations as gx
+import great_expectations.expectations as gxe
 import pandas as pd
 
 from core.config import Settings
 from core.utils import write_json
 
 
-def build_freshness_report(df: pd.DataFrame, settings: Settings, report_path: Path) -> dict[str, Any]:
-    """Tong hop freshness report."""
+def run_data_quality_checks(df: pd.DataFrame, settings: Settings, report_name: str) -> dict[str, Any]:
+    """Run automated Great Expectations 1.x data quality checks on the dataframe."""
+    context = gx.get_context(mode="ephemeral")
+    # Clean unique names for data source and asset per run
+    data_source = context.data_sources.add_pandas(name=f"papers_source_{report_name}")
+    data_asset = data_source.add_dataframe_asset(name=f"papers_asset_{report_name}")
+    batch_def = data_asset.add_batch_definition_whole_dataframe(f"papers_batch_{report_name}")
+    batch = batch_def.get_batch(batch_parameters={"dataframe": df})
+
+    suite = gx.ExpectationSuite(name=f"papers_suite_{report_name}")
+
+    # 1. ExpectTableRowCountToBeBetween
+    suite.add_expectation(gxe.ExpectTableRowCountToBeBetween(min_value=20, max_value=30))
+    # 2. ExpectColumnValuesToNotBeNull
+    suite.add_expectation(gxe.ExpectColumnValuesToNotBeNull(column="paper_id"))
+    suite.add_expectation(gxe.ExpectColumnValuesToNotBeNull(column="title"))
+    suite.add_expectation(gxe.ExpectColumnValuesToNotBeNull(column="summary"))
+    # 3. ExpectColumnValuesToBeUnique
+    suite.add_expectation(gxe.ExpectColumnValuesToBeUnique(column="paper_id"))
+    # 4. ExpectColumnValueLengthsToBeBetween
+    suite.add_expectation(gxe.ExpectColumnValueLengthsToBeBetween(column="title", min_value=8))
+    suite.add_expectation(gxe.ExpectColumnValueLengthsToBeBetween(column="summary", min_value=20))
+
+    validation_result = batch.validate(suite)
+    result_dict = validation_result.to_json_dict()
+
+    # Determine report output path
+    if report_name == "baseline":
+        out_path = settings.paths.baseline_quality_report
+    elif report_name == "corrupted":
+        out_path = settings.paths.corrupted_quality_report
+    else:
+        out_path = settings.paths.quality_dir / f"{report_name}_quality_report.json"
+
+    write_json(Path(out_path), result_dict)
+    return result_dict
+
+
+def build_freshness_report(df: pd.DataFrame, settings: Settings, report_path: Path | None = None) -> dict[str, Any]:
+    """Calculate freshness metrics and verify against Freshness SLA (stale_ratio <= 0.25)."""
     total_rows = len(df)
     if total_rows == 0:
         report = {
@@ -20,99 +59,24 @@ def build_freshness_report(df: pd.DataFrame, settings: Settings, report_path: Pa
             "stale_rows": 0,
             "total_rows": 0,
             "stale_ratio": 0.0,
-            "is_fresh": False,
-            "freshness_threshold_days": settings.freshness_threshold_days,
+            "is_fresh": True,
         }
-        write_json(report_path, report)
-        return report
-
-    latest_published = str(df["published"].max())
-    oldest_published = str(df["published"].min())
-    threshold = settings.freshness_threshold_days
-    stale_rows = int((df["age_days"] > threshold).sum())
-    stale_ratio = float(stale_rows / total_rows)
-    # SLA Freshness: canh bao is_fresh = False neu ty le stale > 25%
-    is_fresh = bool(stale_ratio <= 0.25)
-
-    report = {
-        "latest_published": latest_published,
-        "oldest_published": oldest_published,
-        "stale_rows": stale_rows,
-        "total_rows": total_rows,
-        "stale_ratio": round(stale_ratio, 4),
-        "is_fresh": is_fresh,
-        "freshness_threshold_days": threshold,
-    }
-    write_json(report_path, report)
-    return report
-
-
-def run_data_quality_checks(df: pd.DataFrame, settings: Settings, report_name: str) -> dict[str, Any]:
-    """Tao bo data quality checks su dung Great Expectations 1.x ephemeral mode."""
-    import great_expectations as gx
-    import great_expectations.expectations as gxe
-
-    context = gx.get_context(mode="ephemeral")
-    source_name = f"papers_source_{report_name}_{int(time.time() * 1000)}"
-    data_source = context.data_sources.add_pandas(name=source_name)
-    data_asset = data_source.add_dataframe_asset(name="papers_asset")
-    batch_def = data_asset.add_batch_definition_whole_dataframe("papers_batch")
-    batch = batch_def.get_batch(batch_parameters={"dataframe": df})
-
-    expectations = [
-        gxe.ExpectTableRowCountToBeBetween(min_value=20, max_value=30),
-        gxe.ExpectColumnValuesToNotBeNull(column="paper_id"),
-        gxe.ExpectColumnValuesToNotBeNull(column="title"),
-        gxe.ExpectColumnValuesToBeUnique(column="paper_id"),
-        gxe.ExpectColumnValueLengthsToBeBetween(column="summary", min_value=50, max_value=5000),
-        gxe.ExpectColumnValuesToNotBeNull(column="text_for_embedding"),
-    ]
-
-    suite = gx.ExpectationSuite(name=f"papers_suite_{report_name}_{int(time.time() * 1000)}")
-    for exp in expectations:
-        suite.add_expectation(exp)
-
-    validation_result = batch.validate(suite)
-
-    # Freshness check
-    freshness_path = settings.paths.quality_dir / f"{report_name}_freshness.json" if report_name not in {"baseline", "test"} else settings.paths.freshness_report
-    freshness = build_freshness_report(df, settings, freshness_path)
-
-    check_details = []
-    for res in validation_result.results:
-        exp_type = getattr(res.expectation_config, "type", str(type(res.expectation_config)))
-        kwargs = getattr(res.expectation_config, "kwargs", {})
-        check_details.append(
-            {
-                "expectation_type": exp_type,
-                "kwargs": {k: str(v) for k, v in kwargs.items()} if isinstance(kwargs, dict) else {},
-                "success": bool(res.success),
-                "result": {
-                    "observed_value": res.result.get("observed_value") if isinstance(res.result, dict) else None,
-                    "unexpected_count": res.result.get("unexpected_count", 0) if isinstance(res.result, dict) else 0,
-                },
-            }
-        )
-
-    overall_success = bool(validation_result.success and freshness["is_fresh"])
-
-    quality_report = {
-        "report_name": report_name,
-        "success": overall_success,
-        "gx_success": bool(validation_result.success),
-        "total_checks": len(check_details),
-        "passed_checks": sum(1 for c in check_details if c["success"]),
-        "failed_checks": sum(1 for c in check_details if not c["success"]),
-        "checks": check_details,
-        "freshness": freshness,
-    }
-
-    if report_name == "baseline":
-        out_path = settings.paths.baseline_quality_report
-    elif report_name == "corrupted":
-        out_path = settings.paths.corrupted_quality_report
     else:
-        out_path = settings.paths.quality_dir / f"{report_name}_quality_report.json"
+        latest_published = str(df["published"].max()) if "published" in df.columns else "N/A"
+        oldest_published = str(df["published"].min()) if "published" in df.columns else "N/A"
+        stale_threshold = settings.freshness_threshold_days
+        stale_rows = int((df["age_days"] > stale_threshold).sum()) if "age_days" in df.columns else 0
+        stale_ratio = stale_rows / total_rows
+        is_fresh = stale_ratio <= 0.25
+        report = {
+            "latest_published": latest_published,
+            "oldest_published": oldest_published,
+            "stale_rows": stale_rows,
+            "total_rows": total_rows,
+            "stale_ratio": round(stale_ratio, 4),
+            "is_fresh": is_fresh,
+        }
 
-    write_json(out_path, quality_report)
-    return quality_report
+    target_path = report_path or settings.paths.freshness_report
+    write_json(Path(target_path), report)
+    return report

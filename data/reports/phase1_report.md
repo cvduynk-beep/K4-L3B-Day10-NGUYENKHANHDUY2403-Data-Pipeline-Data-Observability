@@ -1,44 +1,56 @@
-# Báo Cáo Pha 1 — Baseline Data Pipeline & Observability
+# Phase 1: Baseline Data Pipeline & Observability Report
 
-## 1. Nguồn Thu Thập Dữ Liệu (Crossref API Ingestion)
-- **Nguồn dữ liệu:** Crossref REST API
-- **Query truy vấn:** `agentic retrieval augmented generation large language model`
-- **Bộ lọc thời gian:** `from-pub-date:2026-03-30,has-abstract:true`
-- **Tổng số bài báo thu thập:** `24`
-- **Trạng thái làm sạch (Clean rows):** `24` bản ghi
-- **Cơ chế Fallback:** Đọc từ local snapshot `data/raw/crossref_response.json` khi có sự cố mạng hoặc 429.
-
-## 2. Kết Quả Kiểm Định Chất Lượng Dữ Liệu (Great Expectations 1.x)
-- **Trạng thái Quality Gate:** **PASS (True)**
-- **Tổng số kiểm định (Expectations):** `6`
-- **Số kiểm định đạt (Passed):** `6`
-- **Số kiểm định trượt (Failed):** `0`
-
-| STT | Expectation | Kết quả | Chi tiết |
-| :---: | :--- | :---: | :--- |
-| 1 | `expect_table_row_count_to_be_between` | **PASSED** | `{'batch_id': 'papers_source_baseline_1790393711769-papers_asset', 'min_value': '20', 'max_value': '30'}` |
-| 2 | `expect_column_values_to_not_be_null` | **PASSED** | `{'batch_id': 'papers_source_baseline_1790393711769-papers_asset', 'column': 'paper_id'}` |
-| 3 | `expect_column_values_to_be_unique` | **PASSED** | `{'batch_id': 'papers_source_baseline_1790393711769-papers_asset', 'column': 'paper_id'}` |
-| 4 | `expect_column_values_to_not_be_null` | **PASSED** | `{'batch_id': 'papers_source_baseline_1790393711769-papers_asset', 'column': 'title'}` |
-| 5 | `expect_column_value_lengths_to_be_between` | **PASSED** | `{'batch_id': 'papers_source_baseline_1790393711769-papers_asset', 'column': 'summary', 'min_value': '50', 'max_value': '5000'}` |
-| 6 | `expect_column_values_to_not_be_null` | **PASSED** | `{'batch_id': 'papers_source_baseline_1790393711769-papers_asset', 'column': 'text_for_embedding'}` |
-
-## 3. Giám Sát Freshness SLA
-- **Ngưỡng quá hạn (SLA Threshold):** `180` ngày
-- **Bài báo mới nhất:** `2026-07-22`
-- **Bài báo cũ nhất:** `2026-03-28`
-- **Số bài quá hạn (Stale rows):** `1 / 24`
-- **Tỷ lệ quá hạn:** `4.17%`
-- **Đạt chuẩn Freshness SLA:** **ĐẠT (True)**
-
-## 4. Hiệu Năng RAG Retrieval & QA Baseline
-| Chỉ số đánh giá | Giá trị Baseline | Diễn giải |
-| :--- | :---: | :--- |
-| **Retrieval Hit Rate** | **100.00%** | Tỷ lệ tìm đúng tài liệu chứa đáp án trong Top-K |
-| **Mean Token F1** | **1.0000** | Độ trùng khớp từ ngữ giữa câu trả lời và Ground Truth |
-| **Judge Accuracy** | **100.00%** | Tỷ lệ câu trả lời được giám khảo đánh giá chính xác |
-| **Mean Judge Score (1-5)** | **5.00 / 5.0** | Điểm số đánh giá chất lượng câu trả lời |
-| **Tổng số câu hỏi đánh giá** | `10` | Bộ test set chuẩn hóa phủ 4 nhóm nghiệp vụ |
+## 1. Executive Summary
+- **Execution Status:** SUCCESS
+- **Source API:** Crossref REST API
+- **Raw Records Ingested:** 24
+- **Cleaned Records Indexed:** 24
+- **Collection Name:** `papers-baseline`
 
 ---
-*Báo cáo được tự động khởi tạo bởi pipeline Data Observability.*
+
+## 2. Benchmark Evaluation Metrics (Clean Baseline)
+- **Evaluation Test Set Size:** 10 questions
+- **Retrieval Hit Rate (@4):** 100.0%
+- **Mean Token F1 Score:** 100.0%
+- **Judge Evaluation Accuracy:** 100.0%
+- **Mean Judge Score (1-5):** 5.00 / 5.00
+
+| Metric | Score | SLA Target | Status |
+| :--- | :---: | :---: | :---: |
+| **Retrieval Hit Rate** | 100.0% | >= 80.0% | PASSED |
+| **Mean Token F1** | 100.0% | >= 70.0% | PASSED |
+| **Judge Accuracy** | 100.0% | >= 80.0% | PASSED |
+| **Judge Mean Score** | 5.00 | >= 3.50 | PASSED |
+
+---
+
+## 3. Data Observability (Great Expectations 1.x)
+- **Quality Gate Status:** PASSED (True)
+- **Evaluated Expectations:** 7
+- **Successful Expectations:** 7
+- **Unsuccessful Expectations:** 0
+- **Success Percent:** 100.0%
+
+### Core Expectations Verified:
+1. `ExpectTableRowCountToBeBetween(20, 30)` - Validates corpus size stability.
+2. `ExpectColumnValuesToNotBeNull(paper_id, title, summary)` - Ensures mandatory fields completeness.
+3. `ExpectColumnValuesToBeUnique(paper_id)` - Prevents duplicate document contamination.
+4. `ExpectColumnValueLengthsToBeBetween(title, min_value=8)` - Ensures title validity and semantic depth.
+
+---
+
+## 4. Freshness SLA Report
+- **Total Papers:** 24
+- **Stale Papers (> 180 days):** 1
+- **Stale Ratio:** 4.2%
+- **Freshness SLA Status:** HEALTHY (is_fresh = True)
+- **Latest Publication Date:** 2026-07-22
+- **Oldest Publication Date:** 2026-03-28
+
+---
+
+## 5. Architectural Conclusions
+1. Data Lineage from raw Crossref response -> clean dataset -> ChromaDB vector embeddings is strictly validated.
+2. High retrieval hit rate and Token F1 confirm that `text_for_embedding` (5-part structure) accurately captures semantic intent.
+3. Automated Quality Gate established using Great Expectations 1.x ephemeral context is ready to act as a production firewall.

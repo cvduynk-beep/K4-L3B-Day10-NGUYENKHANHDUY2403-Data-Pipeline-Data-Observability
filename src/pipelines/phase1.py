@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import logging
-
-import pandas as pd
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from core.config import load_settings
-from core.utils import now_utc, write_csv, write_json
+from core.utils import now_utc, write_csv
 from evaluation.metrics import evaluate_pipeline
 from evaluation.testset import build_test_set
 from ingestion.cleaning import build_clean_dataframe
@@ -14,72 +14,73 @@ from observability.quality import build_freshness_report, run_data_quality_check
 from observability.reporting import generate_phase1_report
 from retrieval.index import LocalEmbeddingIndex
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-logger = logging.getLogger(__name__)
-
 
 def main() -> None:
-    """Xay dung baseline pipeline end-to-end cho Pha 1."""
-    logger.info("=== BẮT ĐẦU PHA 1: BASELINE PIPELINE ===")
+    """Execute Phase 1 Baseline Pipeline end-to-end:
+    Ingestion -> Cleaning -> Vector Indexing -> Test Set -> Evaluation -> Data Quality & Freshness -> Report.
+    """
+    print("=== STARTING PHASE 1 BASELINE PIPELINE ===")
     settings = load_settings()
-    run_date = now_utc()
 
-    # 1. Ingestion
-    logger.info("1/7. Ingestion: Lay metadata bai bao tu Crossref...")
+    # 1. Fetch raw records
+    print("[1/7] Fetching raw records from Crossref (with local fallback)...")
     records = fetch_source_records(settings)
-    logger.info(f"   -> Thu thap thanh cong {len(records)} raw records.")
+    print(f"      Fetched {len(records)} raw paper records.")
 
-    # 2. Cleaning & Modeling
-    logger.info("2/7. Cleaning: Tien xu ly, khu trung lap va sinh text_for_embedding...")
-    df = build_clean_dataframe(records, run_date)
-    write_csv(df, settings.paths.clean_csv)
-    write_json(settings.paths.clean_json, df.to_dict(orient="records"))
-    logger.info(f"   -> Cleaned dataframe: {len(df)} dong hop le.")
+    # 2. Clean records
+    print("[2/7] Cleaning records and creating embedding text...")
+    df_clean = build_clean_dataframe(records, now_utc())
+    settings.paths.clean_json.parent.mkdir(parents=True, exist_ok=True)
+    df_clean.to_json(settings.paths.clean_json, orient="records", indent=2)
+    write_csv(df_clean, settings.paths.clean_csv)
+    print(f"      Cleaned {len(df_clean)} records saved to {settings.paths.clean_json.name}.")
 
-    # 3. Observability Quality Gate & Freshness
-    logger.info("3/7. Data Observability: Kiem dinh Great Expectations 1.x & Freshness...")
-    quality = run_data_quality_checks(df, settings, "baseline")
-    freshness = build_freshness_report(df, settings, settings.paths.freshness_report)
-    logger.info(f"   -> Quality Gate Status: {quality['success']} (GX: {quality['gx_success']})")
-    logger.info(f"   -> Freshness SLA Status: {freshness['is_fresh']} (Stale rows: {freshness['stale_rows']}/{freshness['total_rows']})")
+    # 3. Build ChromaDB Vector Index
+    print(f"[3/7] Building ChromaDB collection '{settings.baseline_collection_name}' with MiniLM embeddings...")
+    index = LocalEmbeddingIndex.build(df_clean, settings, settings.paths.embeddings_json)
+    print(f"      Indexed {len(index.documents)} documents into ChromaDB.")
 
-    # 4. Build Vector Store Index (ChromaDB)
-    logger.info("4/7. Vector Store: Indexing 24 documents vao Chroma collection 'papers-baseline'...")
-    index = LocalEmbeddingIndex.build(df, settings, settings.paths.embeddings_json)
-    logger.info("   -> Indexing hoan tat.")
+    # 4. Build Evaluation Test Set
+    print("[4/7] Generating evaluation test set (10 questions across 4 domains)...")
+    test_set = build_test_set(df_clean, settings.paths.eval_testset)
+    print(f"      Generated {len(test_set)} test questions in {settings.paths.eval_testset.name}.")
 
-    # 5. Build/Load Test Set
-    logger.info("5/7. Test Set: Khoi tao bo 10 cau hoi benchmark...")
-    if settings.refresh_test_set or not settings.paths.eval_testset.exists():
-        test_set = build_test_set(df, settings.paths.eval_testset)
-        logger.info(f"   -> Sinh moi {len(test_set)} cau hoi.")
-    else:
-        logger.info(f"   -> Su dung test set co san tai {settings.paths.eval_testset}.")
-
-    # 6. Evaluation
-    logger.info("6/7. Evaluation: Danh gia Baseline RAG Retrieval va QA...")
-    bundle = evaluate_pipeline(
+    # 5. Evaluate Retrieval & QA Pipeline
+    print("[5/7] Evaluating baseline RAG pipeline metrics...")
+    eval_bundle = evaluate_pipeline(
         settings=settings,
         index=index,
         test_set_path=settings.paths.eval_testset,
         metrics_output_path=settings.paths.baseline_metrics,
         answers_output_path=settings.paths.baseline_answers,
     )
-    logger.info(f"   -> Baseline Retrieval Hit Rate: {bundle.summary['retrieval_hit_rate']:.2%}")
-    logger.info(f"   -> Baseline Mean Token F1: {bundle.summary['mean_token_f1']:.4f}")
-    logger.info(f"   -> Baseline Judge Accuracy: {bundle.summary['judge_accuracy']:.2%}")
+    hit_rate = eval_bundle.summary.get("retrieval_hit_rate", 0.0)
+    token_f1 = eval_bundle.summary.get("mean_token_f1", 0.0)
+    print(f"      Baseline Hit Rate: {hit_rate * 100:.1f}%, Mean Token F1: {token_f1 * 100:.1f}%.")
+
+    # 6. Data Observability (GX 1.x & Freshness SLA)
+    print("[6/7] Running Great Expectations 1.x quality checks and Freshness SLA...")
+    quality = run_data_quality_checks(df_clean, settings, "baseline")
+    freshness = build_freshness_report(df_clean, settings, settings.paths.freshness_report)
+    print(f"      Quality Gate Success: {quality.get('success', False)}, Is Fresh: {freshness.get('is_fresh', False)}.")
 
     # 7. Generate Phase 1 Report
-    logger.info("7/7. Reporting: Sinh bao cao Phase 1 Markdown...")
+    print("[7/7] Generating Phase 1 markdown report...")
     source_summary = {
-        "query": settings.source_query,
-        "filter": settings.source_filter,
-        "total_records": len(records),
-        "clean_rows": len(df),
+        "source_api": settings.source_api,
+        "raw_count": len(records),
+        "clean_count": len(df_clean),
+        "collection_name": settings.baseline_collection_name,
     }
-    generate_phase1_report(settings.paths.baseline_report, source_summary, bundle.summary, quality, freshness)
-    logger.info(f"   -> Bao cao da duoc luu tai {settings.paths.baseline_report}")
-    logger.info("=== HOÀN TẤT PHA 1: BASELINE PIPELINE THÀNH CÔNG ===")
+    generate_phase1_report(
+        report_path=settings.paths.baseline_report,
+        source_summary=source_summary,
+        metrics=eval_bundle.summary,
+        quality=quality,
+        freshness=freshness,
+    )
+    print(f"      Report generated at {settings.paths.baseline_report.name}.")
+    print("=== PHASE 1 BASELINE PIPELINE COMPLETED SUCCESSFULLY ===")
 
 
 if __name__ == "__main__":
